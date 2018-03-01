@@ -1,10 +1,12 @@
 import requests
 from datetime import datetime
+from datetime import timedelta
 import pytz
 import boto3
+import humanize
 
 #Alex Dobrovansky
-#27 Dec 17
+#27 Feb 18
 
 # --------------- Helpers that build all of the responses ----------------------
 
@@ -61,42 +63,30 @@ def build_response(session_attributes, speechlet_response):
 
 #Actual logic code
 
-def secondsTilBus(busTime):
-    return (busTime - datetime.now(pytz.timezone('US/Pacific'))).seconds
+def secondsTilBus(busTime,timeZone):
+    return (busTime - datetime.now(timeZone)).seconds
+    
 
+def time2Response(first, firstLine, firstMode, second, secondLine, secondMode):
+    result = "The next " + firstLine + " " + firstMode + " will arrive in "
+    result += humanize.naturaldelta(first)
+    if (firstLine == secondLine):
+        result += ". The " + secondMode + " after that will arrive in "      
+    else:
+        result += ". The " + secondLine + " " + secondMode + " will arrive in "
+    result += humanize.naturaldelta(second)
+    result += "."
 
-def time2Response(first, firstLine, second, secondLine):
-    result = "The next " + firstLine + " bus is "
-    if (first < 60):
-        result += "less than a minute away. "
-    else: #only says one bus if less than minute away
-        firstMinutes = int(first/60)
-        if (firstMinutes == 1):
-            result += str(firstMinutes) + " minute away. "
-        elif (firstMinutes > 60):
-            firstHours = firstHours/60
-            result += str(firstHours) + " hours away. "
-            if (firstLine == secondLine):
-                result += "The bus after that is " + str((second/60)/60) + " hours away. "
-            else:
-                result += "The "+ secondLine +" bus after that is " + str((second/60)/60) + " hours away. "
-        else:
-            result += str(firstMinutes) + " minutes away. "
-            if (firstLine == secondLine):
-                result += "The bus after that is " + str(int(second/60)) + " minutes away. "
-            else:
-                result += "The "+ secondLine +" bus after that is " + str(int(second/60)) + " minutes away. "
     return result
 
 
 def getBusInfo(userId):
-    #for testing
     
     table = boto3.resource('dynamodb').Table('busDB')
     try:
         resp = table.get_item(Key={'userID':userId})                    
         base = "https://api.navitia.io/v1/"
-        stopArea = resp['Item']['stop_area'] #"WHT:SA:CTP102462" #stop outside home
+        stopArea = resp['Item']['stop_area'] 
         line = resp['Item']['line'] #"WHT:4-Whistler"
         region = resp['Item']['region']
         
@@ -104,18 +94,27 @@ def getBusInfo(userId):
             url = base + "coverage/" + region + "/stop_areas/" + stopArea + "/departures?count=6"
         else:
             url = base + "coverage/" + region + "/stop_areas/" + stopArea + "/lines/" + line + "/departures?count=3"
-            
-        r = requests.get(url,auth=('',''))
+        print(url)
+        r = requests.get(url,auth=('INSERT API KEY HERE',''))
+        print(r)
+        
         bus0 = r.json()["departures"][0]["stop_date_time"]["departure_date_time"]
         bus0Line = r.json()["departures"][0]["route"]["line"]["name"]
+        bus0Mode = r.json()["departures"][0]["display_informations"]["commercial_mode"]
         bus1 = r.json()["departures"][1]["stop_date_time"]["departure_date_time"]
         bus1Line = r.json()["departures"][1]["route"]["line"]["name"]
+        bus1Mode = r.json()["departures"][1]["display_informations"]["commercial_mode"]
         if (bus1 == bus0) and (bus0Line == bus1Line):
             bus1 = r.json()["departures"][2]["stop_date_time"]["departure_date_time"]
             bus1Line = r.json()["departures"][2]["route"]["line"]["name"]
-        bus0Time = pytz.timezone('US/Pacific').localize(datetime.strptime(bus0, '%Y%m%dT%H%M%S'))
-        bus1Time = pytz.timezone('US/Pacific').localize(datetime.strptime(bus1, '%Y%m%dT%H%M%S'))
-        return time2Response(secondsTilBus(bus0Time),bus0Line,secondsTilBus(bus1Time),bus1Line)
+            bus1Mode = r.json()["departures"][2]["display_informations"]["commercial_mode"]
+        
+        TZ = pytz.timezone(r.json()["context"]["timezone"])
+        bus0Time = TZ.localize(datetime.strptime(bus0, '%Y%m%dT%H%M%S'))
+        bus0Seconds = secondsTilBus(bus0Time, TZ)
+        bus1Time = TZ.localize(datetime.strptime(bus1, '%Y%m%dT%H%M%S'))
+        bus1Seconds = secondsTilBus(bus1Time, TZ)
+        return time2Response(bus0Seconds,bus0Line,bus0Mode,bus1Seconds,bus1Line,bus1Mode)
     except KeyError:
         return "Error: You have not selected a stop"
     
@@ -146,7 +145,7 @@ def setStopId(userId,intent):
         if 'Item' in resp:
             stopArea = resp['Item']['stop_area']
             line = resp['Item']['line']
-            line = resp['Item']['region']
+            region = resp['Item']['region']
             #new item 
             table.put_item(
                 Item={
