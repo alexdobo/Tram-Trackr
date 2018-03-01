@@ -20,7 +20,8 @@ This is the code for the Tram Trackr Alexa skill
 https://www.amazon.com/Alex-Dobrovansky-Tram-Trackr/dp/B078KFRCDD/
 
 
-The python file is the code that runs Alexa skill
+The python file is the code that runs Alexa skill.
+
 The Node.js file is the backend, uploads data to a database.
 
 
